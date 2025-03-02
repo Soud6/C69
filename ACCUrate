@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import pickle
 import time
-import fitz  # PyMuPDF for PDF processing
+import fitz 
 import pandas as pd
 from langchain_anthropic import ChatAnthropic
 from langchain.chains import RetrievalQAWithSourcesChain
@@ -25,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 RockyBot: Data Analytics Research Tool")
+st.title("🚀 AKKuretBot: Data Analytics Research Tool")
 st.sidebar.title("🔍 Select Your AI Model")
 
 # User selects LLM model
