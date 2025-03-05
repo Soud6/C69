@@ -1,0 +1,153 @@
+import os
+import streamlit as st
+import pickle
+import time
+import fitz  # PyMuPDF for PDF processing
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from langchain_anthropic import ChatAnthropic
+from langchain.chains import RetrievalQAWithSourcesChain
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from fpdf import FPDF
+
+# Manually set the API key
+ANTHROPIC_API_KEY = "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"
+# UI Enhancements
+st.set_page_config(page_title="RockyBot: Data Analytics Tool", page_icon="📊", layout="wide")
+st.markdown("""
+    <style>
+    .main {background-color: #FF5A5F; padding: 20px; border-radius: 10px;}
+    .stButton > button {background-color: #FC642D; color: white; border-radius: 10px;}
+    .stSidebar {background-color: #FFB400; padding: 20px; border-radius: 10px;}
+    .stTextInput > div > div > input {border: 2px solid #FF385C; border-radius: 8px;}
+    .stRadio > label {color: #484848; font-weight: bold;}
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🚀 RockyBot: Data Analytics Research Tool")
+st.sidebar.title("🔍 Select Your AI Model")
+
+# User selects LLM model
+llm_option = st.sidebar.radio("Choose an LLM", ["Claude-3-7-Sonnet", "Claude-3-5-Haiku", "Hugging Face Model"], index=0)
+
+if llm_option == "Claude-3-7-Sonnet":
+    llm = ChatAnthropic(
+        model="claude-3-7-sonnet-20250219",
+        temperature=0.7,
+        max_tokens=500,
+        anthropic_api_key=ANTHROPIC_API_KEY
+    )
+elif llm_option == "Claude-3-5-Haiku":
+    llm = ChatAnthropic(
+        model="claude-3-5-haiku-20241022",
+        temperature=0.7,
+        max_tokens=500,
+        anthropic_api_key=ANTHROPIC_API_KEY
+    )
+else:
+    st.sidebar.warning("🤖 Hugging Face model integration coming soon!")
+    llm = None
+
+st.sidebar.title("📂 Upload Files")
+
+# Upload multiple PDF and Excel files
+uploaded_files = st.sidebar.file_uploader("Upload Files (PDF/Excel)", accept_multiple_files=True, type=["pdf", "xlsx", "xls"])
+process_files_clicked = st.sidebar.button("🚀 Process Files")
+file_path = "faiss_store.pkl"
+
+main_placeholder = st.empty()
+
+if process_files_clicked and uploaded_files and llm:
+    docs = []
+    all_dataframes = []
+    
+    for uploaded_file in uploaded_files:
+        if uploaded_file.type == "application/pdf":
+            # Read PDF text
+            pdf_reader = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+            text = "\n".join([page.get_text("text") for page in pdf_reader])
+        elif uploaded_file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            # Read Excel file
+            df = pd.read_excel(uploaded_file)
+            all_dataframes.append(df)
+            text = df.to_string()
+        
+        # Split text into smaller chunks for better embeddings
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=100, separators=['\n\n', '\n', '.', ',']
+        )
+        file_docs = text_splitter.create_documents([text], metadatas=[{"source": uploaded_file.name} for _ in range(len(text_splitter.split_text(text)))])
+        docs.extend(file_docs)
+    
+    main_placeholder.success("✅ Files Processed Successfully!")
+    embeddings = HuggingFaceEmbeddings()
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    
+    # Save FAISS index
+    with open(file_path, "wb") as f:
+        pickle.dump(vectorstore, f)
+    
+    time.sleep(2)
+    
+    # Display statistical insights
+    if all_dataframes:
+        st.subheader("📊 Data Overview & Analysis")
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
+        st.write("### Data Sample:")
+        st.dataframe(combined_df.head())
+        
+        st.write("### Statistical Summary:")
+        st.write(combined_df.describe())
+        
+        st.write("### Correlation Matrix:")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.heatmap(combined_df.corr(), annot=True, cmap='coolwarm', fmt=".2f")
+        st.pyplot(fig)
+        
+        st.write("### Distribution of Numerical Features:")
+        num_cols = combined_df.select_dtypes(include=[np.number]).columns
+        for col in num_cols:
+            fig, ax = plt.subplots()
+            sns.histplot(combined_df[col], kde=True, bins=30)
+            ax.set_title(f'Distribution of {col}')
+            st.pyplot(fig)
+        
+        # Save analysis as PDF
+        if st.button("📄 Save Report as PDF"):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            pdf.cell(200, 10, txt="Data Analysis Report", ln=True, align='C')
+            pdf.multi_cell(0, 10, combined_df.describe().to_string())
+            pdf.output("data_analysis_report.pdf")
+            st.success("Report saved as data_analysis_report.pdf")
+
+st.subheader("💡 Ask a Data Analytics Question:")
+query = st.text_input("Type your query here...")
+if query and llm:
+    if os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            vectorstore = pickle.load(f)
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            chain = RetrievalQAWithSourcesChain.from_llm(llm=llm, retriever=retriever)
+            result = chain({"question": query}, return_only_outputs=True)
+            
+            st.markdown("### 🤖 Answer")
+            answer_text = result.get("answer", "No answer found.")
+            st.success(answer_text)
+            
+            # Display sources with similarity scores
+            sources = result.get("sources", "")
+            if sources:
+                st.subheader("📌 Sources and Confidence Scores:")
+                for source in sources.split("\n"):
+                    st.write(f"🔹 {source}")
+                
+            # Judgment panel for optimized results
+            st.subheader("📝 Rate the Response:")
+            rating = st.radio("How helpful was the answer?", ("Excellent", "Good", "Average", "Poor"))
+            st.button("Submit Rating")
