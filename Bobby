@@ -1,0 +1,2 @@
+Libaries
+pip install streamlit pymupdf pandas langchain faiss-cpu anthropic langchain-anthropic huggingface-hub 
